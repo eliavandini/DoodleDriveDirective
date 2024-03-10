@@ -1,6 +1,6 @@
 #include <Arduino.h>
 #include <HardwareSerial.h>
-#include <SoftwareSerial.h>
+// #include <Serial.h>
 #include <DRV8825.h>
 unsigned long last_cycle_time = 0;
 bool led_13 = true;
@@ -8,10 +8,19 @@ bool led_13 = true;
 // #define Serial Serial
 
 #define led PC13
-// HardwareSerial Serial6(USART6);
+// HardwareSerial Serial(USART6);
 #define MOTOR_STEPS 200 // from datasheet
 #define RPM 100
 
+#define WORKING_HEIGHT 0
+#define CANVAS_HEIGHT 0
+#define CANVAS_X 0
+#define cANVAS_Y 0
+#define CANVAS_H 0
+#define cANVAS_W 0
+// #define
+
+// zu korrigieren
 // #define DIR1_PIN PD2
 // #define STEP1_PIN PC11
 // #define ENABLE1_PIN PC12
@@ -36,8 +45,8 @@ bool led_13 = true;
 // #define SLEEP4_PIN PB10
 // #define RESET4_PIN PA10
 
-#define START_BYTE 0xD8
-#define END_BYTE 0xE4
+#define START_BYTE 216
+#define END_BYTE 228
 
 #define INSTRUCTION_SEND_BUFF 3
 #define INSTRUCTION_ABORT 5
@@ -52,33 +61,35 @@ bool led_13 = true;
 #define INSTRUCTION_FINISHED 103
 #define INSTRUCTION_ERROR 200
 
-#define TXPIN PC7
-#define RXPIN PC6
+#define RXPIN PC7
+#define TXPIN PC6
 
-SoftwareSerial mySerial(RXPIN, TXPIN);
+// Serial Serial(RXPIN, TXPIN);
 // DRV8825 stepper1(MOTOR_STEPS, DIR1_PIN, STEP1_PIN, ENABLE1_PIN);
 // DRV8825 stepper2(MOTOR_STEPS, DIR2_PIN, STEP2_PIN, ENABLE2_PIN);
 // DRV8825 stepper3(MOTOR_STEPS, DIR3_PIN, STEP3_PIN, ENABLE3_PIN);
 // DRV8825 stepper4(MOTOR_STEPS, DIR4_PIN, STEP4_PIN, ENABLE4_PIN);
 // DRV8825 steppers[4] = {stepper1, stepper2, stepper3, stepper4};
 
+uint8_t serial_buff[256] = {0};
+const char data[] = {1, 2, 3, 4, 5};
+
 void setup()
 {
   // pinMode(led, OUTPUT);
-  pinMode(RXPIN, INPUT);
-  pinMode(TXPIN, OUTPUT);
-  mySerial.begin(9600);
-  mySerial.setTimeout(99999999);
-
-  mySerial.println("read: ");
+  // pinMode(RXPIN, INPUT);
+  // pinMode(TXPIN, OUTPUT);
+  Serial.setRx(RXPIN);
+  Serial.setTx(TXPIN);
+  Serial.begin(9600);
   // while (!digitalRead(PC6))
   // {
-  //   // softwareSerial.println("waiting");
+  //   // Serial.println("waiting");
   //   // return;
   // }
-  // // uint8_t d = mySerial.read();
-  // mySerial.println("wiufb");
-  // mySerial.println(d);
+  // // uint8_t d = Serial.read();
+  // Serial.println("wiufb");
+  // Serial.println(d);
 
   // pinMode(SLEEP1_PIN, OUTPUT);
   // pinMode(RESET1_PIN, OUTPUT);
@@ -137,29 +148,37 @@ void setup()
 //       i++;
 //       if (i>3){
 //         i = 0;
-//         softwareSerial.println(interval);
+//         Serial.println(interval);
 //       }
 //       if (interval > 1000){
 //         continue;
 //       }
-//       // softwareSerial.readBytesUntil()
+//       // Serial.readBytesUntil()
 
 //     }
 // }
 
-// void send_instruction(uint16_t proc_id, uint8_t instruction, uint32_t data_size, const char data[])
-// {
-//   byte proc_id_low = lowByte(proc_id);
-//   byte proc_id_high = highByte(proc_id);
+void clear_serial_input_buf()
+{
+  for (int i = 0; i < 256; i++)
+  {
+    serial_buff[i] = 0;
+  }
+}
 
-//   byte transmission[] = {START_BYTE, proc_id_high, proc_id_low, instruction};
-//   softwareSerial.write(transmission, 4);
-//   if (data_size)
-//   {
-//     softwareSerial.write(data, data_size);
-//   }
-//   softwareSerial.write(END_BYTE);
-// }
+void send_instruction(uint16_t proc_id, uint8_t instruction, uint32_t data_size, const char data[])
+{
+  byte proc_id_low = lowByte(proc_id);
+  byte proc_id_high = highByte(proc_id);
+
+  byte transmission[] = {START_BYTE, proc_id_high, proc_id_low, instruction};
+  Serial.write(transmission, 4);
+  if (data_size)
+  {
+    Serial.write(data, data_size);
+  }
+  Serial.write(END_BYTE);
+}
 
 void send_instruction(uint16_t proc_id, uint8_t instruction)
 {
@@ -167,9 +186,9 @@ void send_instruction(uint16_t proc_id, uint8_t instruction)
   byte proc_id_high = highByte(proc_id);
 
   byte transmission[] = {START_BYTE, proc_id_high, proc_id_low, instruction, END_BYTE};
-  mySerial.write(transmission, 5);
+  Serial.write(transmission, 5);
   // transmission[3] = 130;
-  // softwareSerial.write(transmission, 5);
+  // Serial.write(transmission, 5);
 }
 
 void ask_for_instructions()
@@ -177,56 +196,73 @@ void ask_for_instructions()
   send_instruction(9, INSTRUCTION_PING);
   uint8_t d = -1;
 
-  while (true)
+  // while (true)
+  // {
+  // while (Serial.available() <= 0)
+  // {
+  //   // Serial.println("waiting");
+  //   // return;
+  // }
+  // Serial.println("read()");
+  //   if (Serial.available())
+  //   {
+  //     uint8_t d = Serial.read();
+  //   }
+  //   else
+  //   {
+  //     d = -1;
+  //   }
+  //   // Serial.println(d);
+  //   if (d == -1 || d == 0xFF)
+  //   {
+  //     // Serial.println("returning");
+  //     // return;
+  //   }
+  //   else if (d == START_BYTE)
+  //   {
+  //     break;
+  //   }
+  //   else
+  //   {
+  //     Serial.write((char)d);
+  //   }
+  // }
+  Serial.setTimeout(10000);
+  if (!Serial.find(START_BYTE))
   {
-    while (mySerial.available() <= 0)
-    {
-      // softwareSerial.println("waiting");
-      // return;
-    }
-    mySerial.println("read()");
-    uint8_t d = mySerial.read();
-    mySerial.println(d);
-    if (d == -1)
-    {
-      mySerial.println("returning");
-      // return;
-    }
-    if (d == START_BYTE)
-    {
-      break;
-    }
+    // Serial.println("not found");
+    return;
   }
-  int32_t proc_id2 = mySerial.read();
-  int32_t proc_id = mySerial.read();
-  int32_t inst_id = mySerial.read();
-  mySerial.print("inst_id: ");
-  mySerial.println(inst_id);
+  // Serial.println("found");
+  // uint8_t proc_id2 = Serial.read();
+  // uint8_t proc_id = Serial.read();
+  // uint8_t inst_id = Serial.read();
+  // Serial.print("inst_id: ");
+  // Serial.println(inst_id);
+  clear_serial_input_buf();
+  Serial.readBytesUntil(END_BYTE, serial_buff, 256);
+  uint8_t proc_id2 = serial_buff[0];
+  uint8_t proc_id = serial_buff[1];
+  uint8_t inst_id = serial_buff[2];
   switch (inst_id)
   {
   case INSTRUCTION_ABORT:
-    mySerial.println("abort");
-    if (mySerial.read() == END_BYTE)
-    {
-      // abort();
-    }
+    // Serial.println("abort");
+    // if (Serial.read() == END_BYTE)
+    // {
+    //   // abort();
+    // }
     break;
   case INSTRUCTION_MEMORY_MAP:
-    mySerial.println("memory");
-    if (mySerial.read() == END_BYTE)
-    {
-      mySerial.println("sending");
-      // const char data[] = {1, 2, 3, 4, 5};
-      // send_instruction(proc_id, INSTRUCTION_MEMORY_MAP, 5, data);
-      send_instruction(30, INSTRUCTION_MEMORY_MAP);
-    }
-    else
-    {
-      mySerial.println("end byte error");
-    }
+    send_instruction(proc_id, INSTRUCTION_MEMORY_MAP, 5, data);
+    // send_instruction(30, INSTRUCTION_MEMORY_MAP);
     break;
 
   default:
+    Serial.print("instruction:");
+    Serial.print(proc_id2, DEC);
+    Serial.print(proc_id, DEC);
+    Serial.println(inst_id, DEC);
     break;
   }
 }
@@ -262,18 +298,20 @@ void ask_for_instructions()
 // int i = 0;
 void loop()
 {
+  ask_for_instructions();
   // digitalWrite(led, digitalRead(RXPIN));
-  if (!digitalRead(RXPIN))
-  {
-    mySerial.println("recived");
-  }
+  // if (Serial.available())
+  // {
+  //   Serial.print("recived: ");
+  //   Serial.println(Serial.read());
+  // }
   // i++;
   // if (millis() - last_cycle_time > 500) {
   //   last_cycle_time = millis();
 
   //   led_13 = !led_13;
   //   // pinMode(led, led_13);
-  //   // softwareSerial.println(i);
+  //   // Serial.println(i);
   // }
   // move_while_serial_reading(32 * MOTOR_STEPS);
 
@@ -304,14 +342,14 @@ void loop()
   //   // stepper4.move(32 * MOTOR_STEPS);  // forward revolution
   //   // stepper4.move(-32 * MOTOR_STEPS); // reverse revolution
   //   delay(1000);
-  //   // softwareSerial.println("yo");
+  //   // Serial.println("yo");
   //   ask_for_instructions();
   // }
 
   // ask_for_instructions();
   // while (true)
   // {
-  //   softwareSerial.println("start");
+  //   Serial.println("start");
   //   ask_for_instructions();
   // }
 }

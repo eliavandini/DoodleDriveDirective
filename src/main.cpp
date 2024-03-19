@@ -5,39 +5,15 @@
 #include "stepper.h"
 #include <list>
 #include <iostream>
+#include <ezButton.h>
 using namespace std;
-
-unsigned long last_cycle_time = 0;
-bool led_13 = true;
-
-unsigned long last_start_byte = 0;
-
-enum Instruction
-{
-  wait,
-  walk_stepper,
-  read_sensor,
-  reposition,
-};
-
-struct stepper_instruction
-{
-  uint8_t type;
-  int16_t proc_id;
-
-  int32_t activated_at = -1;
-  uint32_t wait_time;
-
-  uint8_t motor;
-  double goal_post;
-  double RPM;
-};
 
 // #define Serial Serial
 
 #define LED_13 PC13
 // HardwareSerial Serial(USART6);
-#define MOTOR_STEPS 200 // from datasheet
+// from datasheet
+#define MOTOR_STEPS 200
 #define RPM 100
 
 #define WORKING_HEIGHT 0
@@ -94,24 +70,64 @@ struct stepper_instruction
 #define RXPIN PC7
 #define TXPIN PC6
 
-// Serial Serial(RXPIN, TXPIN);
-Stepper stepper1(MOTOR_STEPS, DIR1_PIN, STEP1_PIN, ENABLE1_PIN);
-Stepper stepper2(MOTOR_STEPS, DIR2_PIN, STEP2_PIN, ENABLE2_PIN);
-Stepper stepper3(MOTOR_STEPS, DIR3_PIN, STEP3_PIN, ENABLE3_PIN);
-Stepper stepper4(MOTOR_STEPS, DIR4_PIN, STEP4_PIN, ENABLE4_PIN);
-Stepper steppers[4] = {stepper1, stepper2, stepper3, stepper4};
+unsigned long last_cycle_time = 0;
+bool led_13 = true;
 
+unsigned long last_start_byte = 0;
+
+enum Instruction
+{
+  wait,
+  walk_stepper,
+  read_sensor,
+  reposition,
+};
+
+enum Status_type
+{
+  no_operation,
+  status_working,
+  status_paused,
+  status_standby,
+};
+
+struct stepper_instruction
+{
+  uint8_t type;
+  int16_t proc_id;
+
+  int32_t activated_at = -1;
+  uint32_t wait_time;
+
+  uint8_t motor;
+  double goal_post;
+  double rpm;
+};
+
+// Serial Serial(RXPIN, TXPIN);
+DRV8825 stepper1(MOTOR_STEPS, DIR1_PIN, STEP1_PIN, ENABLE1_PIN);
+DRV8825 stepper2(MOTOR_STEPS, DIR2_PIN, STEP2_PIN, ENABLE2_PIN);
+DRV8825 stepper3(MOTOR_STEPS, DIR3_PIN, STEP3_PIN, ENABLE3_PIN);
+DRV8825 stepper4(MOTOR_STEPS, DIR4_PIN, STEP4_PIN, ENABLE4_PIN);
+// Stepper steppers[4] = {stepper1, stepper2, stepper3, stepper4};
+
+uint8_t a;
+uint8_t b;
 uint8_t serial_meta_buff[4] = {0};
 uint8_t serial_data_buff[256] = {0};
 char mock_data[] = {1, 2, 3, 4, 5};
 #define MEMORY_SIZE 32
-bool memory[MEMORY_SIZE] = {0};
+bool memory[MEMORY_SIZE] = {1};
 string read_buffer = "";
 
 uint32_t curr_ins = 0;
 vector<stepper_instruction> step_ins;
 
 bool paused = false;
+
+ezButton button(PA0); // create ezButton object that attach to pin 7
+
+// pinMode(PC13, OUTPUT);
 
 void setup()
 {
@@ -190,11 +206,14 @@ void clear_serial_input_data_buf()
 
 void send_instruction(uint16_t proc_id, uint8_t instruction, uint8_t data_size, const char data[])
 {
+  while (millis() < last_start_byte + 150)
+  {
+  }
   uint8_t proc_id_low = lowByte(proc_id);
   uint8_t proc_id_high = highByte(proc_id);
 
-  uint8_t transmission[] = {START_BYTE, proc_id_high, proc_id_low, instruction, data_size};
-  Serial.write(transmission, 5);
+  uint8_t transmission[] = {START_BYTE, proc_id_high, proc_id_low, instruction, data_size, END_BYTE};
+  Serial.write(transmission, 6);
   if (data_size)
   {
     Serial.write(data, data_size);
@@ -204,6 +223,9 @@ void send_instruction(uint16_t proc_id, uint8_t instruction, uint8_t data_size, 
 
 void send_instruction(uint16_t proc_id, uint8_t instruction)
 {
+  while (millis() < last_start_byte + 150)
+  {
+  }
   uint8_t proc_id_low = lowByte(proc_id);
   uint8_t proc_id_high = highByte(proc_id);
 
@@ -213,14 +235,14 @@ void send_instruction(uint16_t proc_id, uint8_t instruction)
   // Serial.write(transmission, 5);
 }
 
-void ask_for_instructions()
+void ask_for_instructions(uint32_t timeout = 10000)
 {
   send_instruction(9, INSTRUCTION_PING);
   uint8_t d = -1;
   bool looping = true;
   while (looping)
   {
-    Serial.setTimeout(10000);
+    Serial.setTimeout(timeout);
     if (!Serial.find(START_BYTE))
     {
       // Serial.println("not found");
@@ -235,27 +257,48 @@ void ask_for_instructions()
     // Serial.println(inst_id);
     clear_serial_input_buf();
     clear_serial_input_data_buf();
-    Serial.readBytes(serial_meta_buff, 4);
+    Serial.readBytes(serial_meta_buff, 5);
+    // uint8_t f = Serial.read();
     uint8_t proc_id2 = serial_meta_buff[0];
     uint8_t proc_id = serial_meta_buff[1];
     uint8_t inst_id = serial_meta_buff[2];
     uint8_t data_size = serial_meta_buff[3];
+    uint8_t end_byte = serial_meta_buff[4];
+    Serial.print("instruction: "); // Add a space for better readability
+    Serial.print(inst_id, DEC);
+    Serial.println(); // Print a newline character to start a new line
+    if (end_byte != END_BYTE)
+    {
+      send_instruction(proc_id, INSTRUCTION_ERROR, 32, "endbyte not found. please repeat");
+      // for (int i = 0; i < sizeof(serial_meta_buff); i++)
+      // {
+      //   Serial.print(serial_meta_buff[i]);
+      //   Serial.print(" "); // Add a space for better readability
+      // }
+      // for (int i = 0; i < sizeof(serial_data_buff); i++)
+      // {
+      //   Serial.print(serial_data_buff[i], HEX);
+      //   Serial.print(" "); // Add a space for better readability
+      // }
+      // Serial.print("end)_byte: "); // Add a space for better readability
+      // Serial.print(end_byte, DEC);
+      // Serial.println(); // Print a newline character to start a new line
+    }
 
     if (data_size > 0)
     {
-      Serial.readBytes(serial_data_buff, data_size);
-    }
-
-    if (Serial.read() != END_BYTE)
-    {
-      send_instruction(proc_id, INSTRUCTION_ERROR, 32, "endbyte not found. please repeat");
+      Serial.readBytes(serial_data_buff, data_size + 1);
+      if (serial_data_buff[data_size] != END_BYTE)
+      {
+        send_instruction(proc_id, INSTRUCTION_ERROR, 32, "endbyte not found. please repeat");
+      }
     }
 
     switch (inst_id)
     {
     case INSTRUCTION_SEND_BUFF:
-      uint8_t a = serial_data_buff[0];
-      uint8_t b = serial_data_buff[1];
+      a = serial_data_buff[0];
+      b = serial_data_buff[1];
 
       if (a >= b)
       {
@@ -271,15 +314,27 @@ void ask_for_instructions()
         {
           send_instruction(proc_id, INSTRUCTION_ERROR, 22, "request overwrites existing data");
         }
-        else{
+        else
+        {
           memory[i] = true;
         }
       }
+      send_instruction(proc_id, INSTRUCTION_OK);
+
+      for (int j = 0; j < 15; j++)
+      {
+        // std::vector<stepper_instruction> step_ins
+        stepper_instruction inst;
+        inst.type = wait;
+        inst.wait_time = 1000;
+        step_ins.push_back(inst);
+      }
+
       // append instructions to instruction list
       break;
     case INSTRUCTION_FREE_MEM:
-      uint8_t a = serial_data_buff[0];
-      uint8_t b = serial_data_buff[1];
+      a = serial_data_buff[0];
+      b = serial_data_buff[1];
 
       if (a >= b)
       {
@@ -293,10 +348,11 @@ void ask_for_instructions()
       {
         memory[i] = false;
       }
+      send_instruction(proc_id, INSTRUCTION_OK);
       break;
     case INSTRUCTION_READ:
-      uint8_t a = serial_data_buff[0];
-      uint8_t b = serial_data_buff[1];
+      a = serial_data_buff[0];
+      b = serial_data_buff[1];
 
       if (a >= b)
       {
@@ -313,6 +369,7 @@ void ask_for_instructions()
           send_instruction(proc_id, INSTRUCTION_ERROR, 22, "cannot read from freed memory");
         }
       }
+      // send_instruction(proc_id, INSTRUCTION_READ, read_buffer.size(), read_buffer);
       // append instructions to instruction list
       break;
     case INSTRUCTION_ABORT:
@@ -322,6 +379,7 @@ void ask_for_instructions()
       break;
     case INSTRUCTION_PAUSE:
       paused = true;
+      Serial.println("got here");
       send_instruction(proc_id, INSTRUCTION_OK);
       break;
     case INSTRUCTION_RESUME:
@@ -333,6 +391,24 @@ void ask_for_instructions()
       send_instruction(proc_id, INSTRUCTION_OK);
       break;
     case INSTRUCTION_STATUS:
+      char temp_data[5];
+      if (paused)
+      {
+        temp_data[0] = (uint8_t)status_paused;
+      }
+      else if (step_ins.empty())
+      {
+        temp_data[0] = (uint8_t)status_standby;
+      }
+      else
+      {
+        temp_data[0] = (uint8_t)status_working;
+      }
+      temp_data[1] = (uint8_t)highByte(curr_ins);
+      temp_data[2] = (uint8_t)lowByte(curr_ins);
+      temp_data[3] = (uint8_t)highByte(step_ins.size());
+      temp_data[4] = (uint8_t)lowByte(step_ins.size());
+      send_instruction(proc_id, INSTRUCTION_STATUS, 5, temp_data);
       break;
     case INSTRUCTION_ERROR:
       // wtf am i realistically supposed to do if the pc sends an error?
@@ -383,43 +459,68 @@ void ask_for_instructions()
 // }
 
 // int i = 0;
+
+// int start_time = -10000;
 void loop()
 {
-  ask_for_instructions();
-  if (millis() < last_start_byte + 1000)
+  button.loop();
+  stepper2.setMicrostep(32);
+  // stepper2.setMicrostep(32);
+  // stepper3.setMicrostep(32);
+  // stepper4.setMicrostep(32);
+  // while (true)
+  // {
+
+  // stepper1.move(32 * MOTOR_STEPS);  // reverse revolution
+  //   // stepper1.move(-32 * MOTOR_STEPS); // reverse revolution
+
+  // int btnState = button.getState();
+  if (button.isPressed())
   {
-    digitalWrite(LED_13, true);
+    Serial.println("rotating");
+    stepper2.rotate(10 * 360);
+    Serial.println("finished rotating");
+    // stepper1.rotate(360);
   }
 
-  if (step_ins.empty() || paused  || curr_ins >= step_ins.size())
-  {
-    return;
-  }
+  /// actual code!!!
+  // ask_for_instructions(3000);
+  // if (millis() < last_start_byte + 1000)
+  // {
+  //   digitalWrite(LED_13, true);
+  // }
 
-  switch (step_ins.at(curr_ins).type)
-  {
+  // if (step_ins.empty() || paused || curr_ins >= step_ins.size())
+  // {
+  //   return;
+  // }
 
-  case wait:
-    if (step_ins.at(curr_ins).activated_at == -1)
-    {
-      step_ins.at(curr_ins).activated_at = millis();
-    }
-    if (millis() > step_ins.at(curr_ins).wait_time + step_ins.at(curr_ins).activated_at)
-    {
-      curr_ins++;
-    }
-    break;
+  // switch (step_ins.at(curr_ins).type)
+  // {
 
-  case walk_stepper:
-    curr_ins++;
-    break;
-  case read_sensor:
-    curr_ins++;
-    break;
-  case reposition:
-    curr_ins++;
-    break;
-  }
+  // case wait:
+  //   if (step_ins.at(curr_ins).activated_at == -1)
+  //   {
+  //     step_ins.at(curr_ins).activated_at = millis();
+  //   }
+  //   if (millis() > step_ins.at(curr_ins).wait_time + step_ins.at(curr_ins).activated_at)
+  //   {
+  //     curr_ins++;
+  //   }
+  //   break;
+
+  // case walk_stepper:
+  //   curr_ins++;
+  //   break;
+  // case read_sensor:
+  //   curr_ins++;
+  //   break;
+  // case reposition:
+  //   curr_ins++;
+  //   break;
+  // }
+
+  // end of actual code
 
   // digitalWrite(led, digitalRead(RXPIN));
   // if (Serial.available())

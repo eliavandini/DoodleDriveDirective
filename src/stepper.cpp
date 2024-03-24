@@ -28,5 +28,5 @@ void Stepper::walk(double distance)
 
 double Stepper::calcRotationForDistance(double distance)
 {
-    return distance * degPermm;
+    return distance / degPermm;
 }

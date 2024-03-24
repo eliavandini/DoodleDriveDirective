@@ -14,7 +14,8 @@ using namespace std;
 // HardwareSerial Serial(USART6);
 // from datasheet
 #define MOTOR_STEPS 200
-#define RPM 100
+#define RPM_VERTICAL 300
+#define RPM_HORIZONTAL 50
 
 #define WORKING_HEIGHT 0
 #define CANVAS_HEIGHT 0
@@ -25,24 +26,28 @@ using namespace std;
 // #define
 
 // fixed the pins
+#define EDGE1_PIN PA15
 #define DIR1_PIN PC12
 #define STEP1_PIN PC10
 #define ENABLE1_PIN PC11
 #define SLEEP1_PIN PD2
 #define RESET1_PIN PB3
 
+#define EDGE2_PIN PB5
 #define DIR2_PIN PB9
 #define STEP2_PIN PB7
 #define ENABLE2_PIN PB8
 #define SLEEP2_PIN PC1
 #define RESET2_PIN PC2
 
+#define EDGE3_PIN PC3
 #define DIR3_PIN PA4
 #define STEP3_PIN PA2
 #define ENABLE3_PIN PA1
 #define SLEEP3_PIN PA3
 #define RESET3_PIN PA6
 
+#define EDGE3_PIN PB1
 #define DIR4_PIN PB10
 #define STEP4_PIN PA7
 #define ENABLE4_PIN PC4
@@ -67,8 +72,15 @@ using namespace std;
 #define INSTRUCTION_FINISHED 103
 #define INSTRUCTION_ERROR 200
 
+#define CANVAS_COLUMNS 20
+#define CANVAS_ROWS 12
+#define CANVAS_DOTS_COUNT CANVAS_COLUMNS *CANVAS_ROWS
+#define MEMORY_SIZE CANVAS_DOTS_COUNT / 8
+
 #define RXPIN PC7
 #define TXPIN PC6
+
+bool motor_dir = true;
 
 unsigned long last_cycle_time = 0;
 bool led_13 = true;
@@ -105,11 +117,11 @@ struct stepper_instruction
 };
 
 // Serial Serial(RXPIN, TXPIN);
-DRV8825 stepper1(MOTOR_STEPS, DIR1_PIN, STEP1_PIN, ENABLE1_PIN);
-DRV8825 stepper2(MOTOR_STEPS, DIR2_PIN, STEP2_PIN, ENABLE2_PIN);
-DRV8825 stepper3(MOTOR_STEPS, DIR3_PIN, STEP3_PIN, ENABLE3_PIN);
-DRV8825 stepper4(MOTOR_STEPS, DIR4_PIN, STEP4_PIN, ENABLE4_PIN);
-// Stepper steppers[4] = {stepper1, stepper2, stepper3, stepper4};
+Stepper stepper1(MOTOR_STEPS, DIR1_PIN, STEP1_PIN, ENABLE1_PIN);
+Stepper stepper2(MOTOR_STEPS, DIR2_PIN, STEP2_PIN, ENABLE2_PIN);
+Stepper stepper3(MOTOR_STEPS, DIR3_PIN, STEP3_PIN, ENABLE3_PIN);
+Stepper stepper4(MOTOR_STEPS, DIR4_PIN, STEP4_PIN, ENABLE4_PIN);
+Stepper steppers[4] = {stepper1, stepper2, stepper3, stepper4};
 
 uint8_t a;
 uint8_t b;
@@ -143,49 +155,53 @@ void setup()
   // Serial.println("wiufb");
   // Serial.println(d);
 
-  // pinMode(SLEEP1_PIN, OUTPUT);
-  // pinMode(RESET1_PIN, OUTPUT);
+  pinMode(SLEEP1_PIN, OUTPUT);
+  pinMode(RESET1_PIN, OUTPUT);
 
-  // pinMode(SLEEP2_PIN, OUTPUT);
-  // pinMode(RESET2_PIN, OUTPUT);
+  pinMode(SLEEP2_PIN, OUTPUT);
+  pinMode(RESET2_PIN, OUTPUT);
 
-  // pinMode(SLEEP3_PIN, OUTPUT);
-  // pinMode(RESET3_PIN, OUTPUT);
+  pinMode(SLEEP3_PIN, OUTPUT);
+  pinMode(RESET3_PIN, OUTPUT);
 
-  // pinMode(SLEEP4_PIN, OUTPUT);
-  // pinMode(RESET4_PIN, OUTPUT);
+  pinMode(SLEEP4_PIN, OUTPUT);
+  pinMode(RESET4_PIN, OUTPUT);
 
   // /*
   //  * Set target motor RPM.
   //  */
 
-  // stepper1.begin(RPM);
-  // stepper1.setEnableActiveState(LOW);
-  // stepper1.enable();
+  stepper1.begin(RPM_VERTICAL);
+  stepper1.setEnableActiveState(LOW);
+  stepper1.enable();
+  stepper1.degPermm = 0.003333333;
 
-  // stepper2.begin(RPM);
-  // stepper2.setEnableActiveState(LOW);
-  // stepper2.enable();
+  stepper2.begin(RPM_VERTICAL);
+  stepper2.setEnableActiveState(LOW);
+  stepper2.enable();
+  stepper1.degPermm = 0.138888889;
 
-  // stepper3.begin(RPM);
-  // stepper3.setEnableActiveState(LOW);
-  // stepper3.enable();
+  stepper3.begin(RPM_VERTICAL);
+  stepper3.setEnableActiveState(LOW);
+  stepper3.enable();
+  stepper1.degPermm = 0.138888889;
 
-  // stepper4.begin(RPM);
-  // stepper4.setEnableActiveState(LOW);
-  // stepper4.enable();
+  stepper4.begin(RPM_VERTICAL);
+  stepper4.setEnableActiveState(LOW);
+  stepper4.enable();
+  stepper1.degPermm = 0.138888889;
 
-  // digitalWrite(SLEEP1_PIN, HIGH);
-  // digitalWrite(RESET1_PIN, HIGH);
+  digitalWrite(SLEEP1_PIN, LOW);
+  digitalWrite(RESET1_PIN, HIGH);
 
-  // digitalWrite(SLEEP2_PIN, HIGH);
-  // digitalWrite(RESET2_PIN, HIGH);
+  digitalWrite(SLEEP2_PIN, LOW);
+  digitalWrite(RESET2_PIN, HIGH);
 
-  // digitalWrite(SLEEP3_PIN, HIGH);
-  // digitalWrite(RESET3_PIN, HIGH);
+  digitalWrite(SLEEP3_PIN, LOW);
+  digitalWrite(RESET3_PIN, HIGH);
 
-  // digitalWrite(SLEEP4_PIN, HIGH);
-  // digitalWrite(RESET4_PIN, HIGH);
+  digitalWrite(SLEEP4_PIN, LOW);
+  digitalWrite(RESET4_PIN, HIGH);
 }
 
 void clear_serial_input_buf()
@@ -369,7 +385,7 @@ void ask_for_instructions(uint32_t timeout = 10000)
           send_instruction(proc_id, INSTRUCTION_ERROR, 22, "cannot read from freed memory");
         }
       }
-      // send_instruction(proc_id, INSTRUCTION_READ, read_buffer.size(), read_buffer);
+      send_instruction(proc_id, INSTRUCTION_READ, read_buffer.size(), read_buffer.c_str());
       // append instructions to instruction list
       break;
     case INSTRUCTION_ABORT:
@@ -463,25 +479,59 @@ void ask_for_instructions(uint32_t timeout = 10000)
 // int start_time = -10000;
 void loop()
 {
-  button.loop();
-  stepper2.setMicrostep(32);
-  // stepper2.setMicrostep(32);
-  // stepper3.setMicrostep(32);
-  // stepper4.setMicrostep(32);
-  // while (true)
+  // Serial.print(">value: ");
+  // Serial.println(analogRead(EDGE1_PIN));
+  // if (!digitalRead(EDGE2_PIN))
   // {
+  //   Serial.print("pressed2");
+  // }
+  // if (!digitalRead(EDGE3_PIN))
+  // {
+  //   Serial.print("pressed3");
+  // }
+  // button.loop();
+  // stepper1.setMicrostep(32);
+  // // stepper2.setMicrostep(32);
+  // // stepper3.setMicrostep(32);
+  // // stepper4.setMicrostep(32);
+  // // while (true)
+  // // {
 
-  // stepper1.move(32 * MOTOR_STEPS);  // reverse revolution
-  //   // stepper1.move(-32 * MOTOR_STEPS); // reverse revolution
+  // // stepper1.move(32 * MOTOR_STEPS);  // reverse revolution
+  // // stepper1.move(-32 * MOTOR_STEPS); // reverse revolution
 
   // int btnState = button.getState();
-  if (button.isPressed())
-  {
-    Serial.println("rotating");
-    stepper2.rotate(10 * 360);
-    Serial.println("finished rotating");
-    // stepper1.rotate(360);
-  }
+  // if (button.isReleased())
+  // {
+  //   digitalWrite(SLEEP1_PIN, HIGH);
+  //   motor_dir = !motor_dir;
+  //   Serial.println("rotating");
+  //   if (motor_dir)
+  //   {
+  //     for (int j = 0; j < 50; j++)
+  //     {
+  //       if (!digitalRead(EDGE1_PIN))
+  //       {
+  //         break;
+  //       }
+  //       stepper1.walk(1);
+  //     }
+  //   }
+  //   else
+  //   {
+  //     for (int j = 0; j < 50; j++)
+  //     {
+  //       if (!digitalRead(EDGE1_PIN))
+  //       {
+  //         break;
+  //       }
+  //       stepper1.walk(-1);
+  //     }
+  //   }
+  //   Serial.println("finished rotating");
+  //   digitalWrite(SLEEP1_PIN, LOW);
+  //   // stepper1.rotate(360);
+  // }
 
   /// actual code!!!
   // ask_for_instructions(3000);
@@ -510,6 +560,9 @@ void loop()
   //   break;
 
   // case walk_stepper:
+  //   digitalWrite(SLEEP1_PIN, HIGH);
+  //   steppers[step_ins.at(curr_ins).motor].walk(50);
+  //   digitalWrite(SLEEP1_PIN, LOW);
   //   curr_ins++;
   //   break;
   // case read_sensor:

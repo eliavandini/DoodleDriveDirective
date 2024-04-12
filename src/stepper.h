@@ -7,6 +7,7 @@ class Stepper : public DRV8825
 {
 public:
     double degPermm = 10;
+    double position = 0;
     Stepper(short steps, short dir_pin, short step_pin);
     Stepper(short steps, short dir_pin, short step_pin, short enable_pin);
     Stepper(short steps, short dir_pin, short step_pin, short mode0_pin, short mode1_pin, short mode2_pin);

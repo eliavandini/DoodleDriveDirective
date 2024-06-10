@@ -6,6 +6,8 @@
 #include <list>
 #include <iostream>
 #include <ezButton.h>
+#include "antcolony.h"
+#include <ezButton.h>
 using namespace std;
 
 // #define Serial Serial
@@ -19,15 +21,16 @@ using namespace std;
 #define RPM_HORIZONTAL 25
 
 // cnavas ppos constants
-#define MOVING_HEIGHT 9
+#define WRITING_CRUISING_HEIGHT 9
+#define READING_CRUISING_HEIGHT 4
 #define READ_HEIGHT 0
-#define WRITE_HEIGHT 0
+#define WRITE_HEIGHT 1
 
-#define CANVAS_READ_X 5
-#define CANVAS_READ_Y 20
+#define CANVAS_WRITE_X 105
+#define CANVAS_WRITE_Y 30
 
-#define CANVAS_WRITE_X CANVAS_READ_X + 115 // 120
-#define CANVAS_WRITE_Y 25
+#define CANVAS_READ_X CANVAS_WRITE_X - 103
+#define CANVAS_READ_Y CANVAS_WRITE_Y - 5
 
 #define CANVAS_H 140
 #define cANVAS_W 100
@@ -84,13 +87,15 @@ using namespace std;
 #define INSTRUCTION_FINISHED 103
 #define INSTRUCTION_ERROR 200
 
-#define CANVAS_COLUMNS 8
-#define CANVAS_ROWS 14
+#define CANVAS_COLUMNS 10
+#define CANVAS_ROWS 15
 #define CANVAS_DOTS_COUNT CANVAS_COLUMNS *CANVAS_ROWS
 #define MEMORY_SIZE CANVAS_DOTS_COUNT / 8
 
 #define RXPIN PC7
 #define TXPIN PC6
+
+ezButton edger(EDGE1_PIN);
 
 bool motor_dir = true;
 
@@ -142,9 +147,9 @@ uint8_t b;
 uint8_t serial_meta_buff[4] = {0};
 uint8_t serial_data_buff[256] = {0};
 char mock_data[] = {1, 2, 3, 4, 5};
-bool memory[MEMORY_SIZE] = {1};
+bool memory[MEMORY_SIZE] = {0};
 char read_buffer[256] = "";
-uint8_t read_size = 0;
+uint8_t read_buffer_size = 0;
 
 uint32_t curr_ins = 0;
 vector<stepper_instruction> step_ins;
@@ -277,13 +282,27 @@ long last_motor_1_edging = -1000;
 long last_motor_2_edging = -1000;
 long last_motor_3_edging = -1000;
 
+int motor_1_edger_pressed_for = 0;
+
 bool is_motor1_edging()
 {
+    // if (!(millis() % 20))
+    // {
+    //     Serial.println(!digitalRead(EDGE1_PIN));
+    // }
     if (!digitalRead(EDGE1_PIN))
     {
+        // Serial.println(!digitalRead(EDGE1_PIN));
+        // Serial.println(edger.getState());
         last_motor_1_edging = millis();
+        motor_1_edger_pressed_for++;
     }
-    if (last_motor_1_edging + 1000 > millis())
+    else
+    {
+        motor_1_edger_pressed_for = 0;
+    }
+    if (last_motor_1_edging + 1000 > millis() &&
+        motor_1_edger_pressed_for > 4)
     {
         return true;
     }
@@ -332,6 +351,14 @@ void clear_serial_input_data_buf()
     }
 }
 
+void clear_read_buf()
+{
+    for (int i = 0; i < 256; i++)
+    {
+        read_buffer[i] = ' ';
+    }
+}
+
 void send_instruction(uint16_t proc_id, uint8_t instruction, uint8_t data_size, char data[])
 {
     while (millis() < last_start_byte + 150)
@@ -368,84 +395,105 @@ void pathfinder_write(uint16_t a, uint16_t b)
     vector<vector<pair<int, int>>> paths;
     int curr_distance = 9999999;
     vector<pair<int, int>> longus_path;
+    vector<pair<double, double>> to_path;
 
-    for (const auto &preset : presets)
+    vector<int> filtered_preset;
+    vector<pair<int, int>> path;
+
+    for (int i = a; i < b; i++)
     {
-        vector<pair<int, int>> to_path;
-        vector<int> filtered_preset;
-        vector<pair<int, int>> path;
-
-        for (int i = a; i < b; i++)
+        if (i % 8 == 0)
         {
-            if (i % 8 == 0)
-            {
-                Serial.println("");
-                Serial.print("byte nr ");
-                Serial.print(i / 8);
-                Serial.print(": ");
-            }
-
-            if (bitRead(serial_data_buff[(i / 8) + 2], i % 8))
-            {
-                Serial.print(1);
-                to_path.push_back(pair(i % CANVAS_COLUMNS, i / CANVAS_COLUMNS));
-            }
-            else
-            {
-                Serial.print(0);
-            }
+            Serial.println("");
+            Serial.print("byte nr ");
+            Serial.print(i / 8);
+            Serial.print(": ");
         }
 
-        for (const auto &p1 : to_path)
+        if (bitRead(serial_data_buff[(i / 8) + 2], i % 8))
         {
-            for (int i = 0; i < preset.size(); i++)
-            {
-                if (preset[i].first == p1.first && preset[i].second == p1.second)
-                {
-                    filtered_preset.push_back(i);
-                    break;
-                }
-            }
-
-            // for i in filtered_preset:
-            //     if preset[i] in to_path and preset[i]:
-            //         p.append(preset[i])
+            Serial.print(1);
+            to_path.push_back(pair((double)(i % CANVAS_COLUMNS), (double)(i / CANVAS_COLUMNS)));
         }
-        sort(filtered_preset.begin(), filtered_preset.end());
-        for (const auto &i : filtered_preset)
+        else
         {
-            if (std::find(to_path.begin(), to_path.end(), preset.at(i)) != to_path.end())
-            {
-                path.push_back(preset.at(i));
-            }
+            Serial.print(0);
         }
-        uint16_t straight_distance = 0;
-        for (int i = 1; i < path.size(); i++)
-        {
-            if (path[i].second == path[i - 1].second)
-            {
-                straight_distance++;
-            }
-        }
-        if (straight_distance < curr_distance)
-        {
-            curr_distance = straight_distance;
-            longus_path = path;
-        }
-        // Serial.print(a);
-        // Serial.print(",");
-        // // Serial.print(b);
-        // Serial.print("[");
-        // for (const auto &pair : to_path)
-        // {
-        //     Serial.print("[");
-        //     Serial.print(pair.first);
-        //     Serial.print(",");
-        //     Serial.print(pair.second);
-        //     Serial.print("], ");
-        // }
-        // Serial.println("] ");
     }
+
+    // for (const auto &preset : presets)
+    // {
+    //     for (const auto &p1 : to_path)
+    //     {
+    //         for (int i = 0; i < preset.size(); i++)
+    //         {
+    //             if (preset[i].first == p1.first && preset[i].second == p1.second)
+    //             {
+    //                 filtered_preset.push_back(i);
+    //                 break;
+    //             }
+    //         }
+
+    //         // for i in filtered_preset:
+    //         //     if preset[i] in to_path and preset[i]:
+    //         //         p.append(preset[i])
+    //     }
+    //     sort(filtered_preset.begin(), filtered_preset.end());
+    //     for (const auto &i : filtered_preset)
+    //     {
+    //         if (std::find(to_path.begin(), to_path.end(), preset.at(i)) != to_path.end())
+    //         {
+    //             path.push_back(preset.at(i));
+    //         }
+    //     }
+    //     uint16_t straight_distance = 0;
+    //     for (int i = 1; i < path.size(); i++)
+    //     {
+    //         if (path[i].second == path[i - 1].second)
+    //         {
+    //             straight_distance++;
+    //         }
+    //     }
+    //     if (straight_distance < curr_distance)
+    //     {
+    //         curr_distance = straight_distance;
+    //         longus_path = path;
+    //     }
+    // Serial.print(a);
+    // Serial.print(",");
+    // // Serial.print(b);
+    // Serial.print("[");
+    // for (const auto &pair : to_path)
+    // {
+    //     Serial.print("[");
+    //     Serial.print(pair.first);
+    //     Serial.print(",");
+    //     Serial.print(pair.second);
+    //     Serial.print("], ");
+    // }
+    // Serial.println("] ");
+    // }
+
+    AntColony aco(to_path, 10, 20, 0.5, 1, 2, 0.1);
+    aco.run();
+    std::vector<std::pair<double, double>> ant_path;
+    // std::vector<std::pair<double, double>> ant_path;
+    longus_path.clear();
+    // for (int i = 0; i < aco.global_best_path.size(); i++)
+    // {
+    //     // std::pair<double, double> p = {0, 0};
+    //     // longus_path[i].first = (int)to_path[i].first;
+    //     // longus_path[i].second = (int)to_path[i].second;
+    //     longus_path.push_back(pair((int)to_path[i].first, (int)to_path[i].second));
+    // }
+    longus_path = aco.get_best_path();
+
+    // if (aco.global_best_distance < curr_distance)
+    // {
+    //     curr_distance = aco.global_best_distance;
+    //     longus_path = ant_path;
+    // }
+
     Serial.print("[");
     for (const auto &pair : longus_path)
     {
@@ -460,7 +508,7 @@ void pathfinder_write(uint16_t a, uint16_t b)
     stepper_instruction highherad;
     highherad.type = walk_stepper;
     highherad.motor = 1;
-    highherad.goal_post = MOVING_HEIGHT;
+    highherad.goal_post = WRITING_CRUISING_HEIGHT;
     step_ins.push_back(highherad);
 
     for (const auto &pair : longus_path)
@@ -486,7 +534,7 @@ void pathfinder_write(uint16_t a, uint16_t b)
         stepper_instruction inst4;
         inst4.type = walk_stepper;
         inst4.motor = 1;
-        inst4.goal_post = MOVING_HEIGHT;
+        inst4.goal_post = WRITING_CRUISING_HEIGHT;
         step_ins.push_back(inst4);
     }
 
@@ -578,7 +626,7 @@ void pathfinder_read(uint8_t a, uint8_t b)
     stepper_instruction highherad;
     highherad.type = walk_stepper;
     highherad.motor = 1;
-    highherad.goal_post = MOVING_HEIGHT;
+    highherad.goal_post = WRITING_CRUISING_HEIGHT;
     step_ins.push_back(highherad);
     int i = 0;
     for (const auto &pair : longus_path)
@@ -586,7 +634,7 @@ void pathfinder_read(uint8_t a, uint8_t b)
         stepper_instruction inst1;
         inst1.type = walk_stepper;
         inst1.motor = 3;
-        inst1.goal_post = CANVAS_READ_Y + (pair.first * DOT2DOT_DISTANCE);
+        inst1.goal_post = CANVAS_READ_X + (pair.first * DOT2DOT_DISTANCE);
         step_ins.push_back(inst1);
 
         stepper_instruction inst2;
@@ -617,7 +665,7 @@ void pathfinder_read(uint8_t a, uint8_t b)
         stepper_instruction elevate_head;
         elevate_head.type = walk_stepper;
         elevate_head.motor = 1;
-        elevate_head.goal_post = MOVING_HEIGHT;
+        elevate_head.goal_post = READING_CRUISING_HEIGHT;
         step_ins.push_back(elevate_head);
 
         i++;
@@ -626,7 +674,7 @@ void pathfinder_read(uint8_t a, uint8_t b)
     stepper_instruction elevate_head;
     elevate_head.type = walk_stepper;
     elevate_head.motor = 1;
-    elevate_head.goal_post = MOVING_HEIGHT;
+    elevate_head.goal_post = READING_CRUISING_HEIGHT;
     step_ins.push_back(elevate_head);
 
     // Serial.print("[");
@@ -671,7 +719,7 @@ void pathfinder(vector<pair<int, int>> path, bool write = true)
             stepper_instruction inst1;
             inst1.type = walk_stepper;
             inst1.motor = 1;
-            inst1.goal_post = MOVING_HEIGHT;
+            inst1.goal_post = WRITING_CRUISING_HEIGHT;
             step_ins.push_back(inst1);
         }
         else
@@ -847,6 +895,9 @@ void ask_for_instructions(uint32_t timeout = 500)
                 // return;
             }
             send_instruction(proc_id, INSTRUCTION_OK);
+
+            clear_read_buf();
+            read_buffer_size = 0;
             pathfinder_read(a * 8, b * 8);
             // append instructions to instruction list
         }
@@ -874,7 +925,7 @@ void ask_for_instructions(uint32_t timeout = 500)
         }
         else if (inst_id == INSTRUCTION_RESULT)
         {
-            send_instruction(proc_id, INSTRUCTION_RESULT, b, read_buffer);
+            send_instruction(proc_id, INSTRUCTION_RESULT, read_buffer_size + 1, read_buffer);
         }
         else if (inst_id == INSTRUCTION_STATUS)
         {
@@ -904,12 +955,12 @@ void ask_for_instructions(uint32_t timeout = 500)
         }
         else if (inst_id == INSTRUCTION_MEMORY_MAP)
         {
-            char bits[MEMORY_SIZE / 8] = {0};
+            char bits[MEMORY_SIZE] = {0};
             for (int i = 0; i < MEMORY_SIZE; i++)
             {
-                bitWrite(bits[i / 8], i % 8, memory[i]);
+                bits[i] = (char)memory[i];
             }
-            send_instruction(proc_id, INSTRUCTION_MEMORY_MAP, MEMORY_SIZE / 8, bits);
+            send_instruction(proc_id, INSTRUCTION_MEMORY_MAP, MEMORY_SIZE, bits);
             // send_instruction(30, INSTRUCTION_MEMORY_MAP);
         }
         else if (inst_id == INSTRUCTION_WALK)
@@ -946,48 +997,53 @@ void ask_for_instructions(uint32_t timeout = 500)
         }
         else if (inst_id == INSTRUCTION_EDGE)
         {
-            send_instruction(proc_id, INSTRUCTION_OK);
+            // send_instruction(proc_id, INSTRUCTION_OK);
+            stepper1.enable();
+            stepper1.walk(30); // reverse revolution
+            stepper1.disable();
+
             stepper4.enable();
             while (!is_motor3_edging())
             {
-                stepper4.rotate(-1);
+                stepper4.rotate(-0.2);
             }
             stepper4.disable();
             delay(500);
             stepper4.enable();
-            stepper4.walk(235); // reverse revolution
+            stepper4.walk(50); // reverse revolution
             stepper4.disable();
-            stepper4.position = 235;
+            stepper4.position = 50;
 
             // delay(500);
 
-            // stepper2.setRPM(RPM_HORIZONTAL / 2);
             stepper2.enable();
             while (!is_motor2_edging())
             {
-                stepper2.rotate(-1);
+                stepper2.rotate(-0.2);
             }
-            // stepper2.setRPM(RPM_HORIZONTAL);
             stepper2.disable();
             delay(500);
             stepper2.enable();
-            stepper2.walk(195); // reverse revolution
+            stepper2.walk(50); // reverse revolution
             stepper2.disable();
-            stepper2.position = 195;
+            stepper2.position = 50;
 
             // delay(500);
 
-            // stepper1.enable();
-            // while (!is_motor1_edging())
-            // {
-            //     stepper1.rotate(-1);
-            // }
-            // stepper1.disable();
-            // delay(500);
-            // stepper1.enable();
-            // stepper1.walk(10); // reverse revolution
-            // stepper1.disable();
-            // stepper1.position = 10;
+            stepper1.enable();
+            while (!is_motor1_edging())
+            {
+                stepper1.rotate(-0.2);
+            }
+            stepper1.disable();
+            delay(500);
+            stepper1.enable();
+            stepper1.walk(10); // reverse revolution
+            stepper1.disable();
+            stepper1.position = 10;
+
+            curr_ins++;
+            break;
         }
 
         else
@@ -1192,8 +1248,8 @@ void loop()
 
     // ! actual code!!!
 
-    // Serial.print("LDR: ");
-    // Serial.println(digitalRead(LDR_PIN));
+    Serial.print(">alanog1: ");
+    Serial.println(edger.getState());
     ask_for_instructions(100);
     if (millis() < last_start_byte + 1000)
     {
@@ -1272,8 +1328,11 @@ void loop()
         break;
 
     case read_sensor:
+        if (step_ins.at(curr_ins).read_pos / 8 > read_buffer_size)
+        {
+            read_buffer_size = step_ins.at(curr_ins).read_pos / 8;
+        }
         bitWrite(read_buffer[step_ins.at(curr_ins).read_pos / 8], step_ins.at(curr_ins).read_pos % 8, digitalRead(LDR_PIN));
-        read_size = (step_ins.at(curr_ins).read_pos / 8) + 1;
         Serial.print("dot id ");
         Serial.print(step_ins.at(curr_ins).read_pos);
         Serial.print(" in state: ");
@@ -1289,35 +1348,35 @@ void loop()
         stepper4.enable();
         while (!is_motor3_edging())
         {
-            stepper4.walk(-1);
+            stepper4.rotate(-0.2);
         }
         stepper4.disable();
         delay(500);
         stepper4.enable();
-        stepper4.walk(235); // reverse revolution
+        stepper4.walk(50); // reverse revolution
         stepper4.disable();
-        stepper4.position = 235;
+        stepper4.position = 50;
 
         // delay(500);
 
         stepper2.enable();
         while (!is_motor2_edging())
         {
-            stepper2.walk(-1);
+            stepper2.rotate(-0.2);
         }
         stepper2.disable();
         delay(500);
         stepper2.enable();
-        stepper2.walk(195); // reverse revolution
+        stepper2.walk(50); // reverse revolution
         stepper2.disable();
-        stepper2.position = 195;
+        stepper2.position = 50;
 
         // delay(500);
 
         stepper1.enable();
         while (!is_motor1_edging())
         {
-            stepper1.walk(-1);
+            stepper1.rotate(-0.2);
         }
         stepper1.disable();
         delay(500);
@@ -1409,6 +1468,7 @@ void setup()
     Serial.setRx(RXPIN);
     Serial.setTx(TXPIN);
     Serial.begin(9600);
+    edger.setDebounceTime(50);
 
     // Serial.print("[");
     // for (const auto &preset : presets)
@@ -1439,7 +1499,7 @@ void setup()
     pinMode(RESET1_PIN, OUTPUT);
 
     pinMode(ENABLE2_PIN, OUTPUT);
-    pinMode(RESET2_PIN, OUTPUT);
+    pinMode(RESET2_PIN, OUTPUT);z
 
     pinMode(ENABLE3_PIN, OUTPUT);
     pinMode(RESET3_PIN, OUTPUT);
@@ -1469,7 +1529,7 @@ void setup()
     stepper4.begin(RPM_HORIZONTAL, 32);
     stepper4.setEnableActiveState(HIGH);
     stepper4.disable();
-    stepper4.degPermm = 0.180555556;
+    stepper4.degPermm = 0.138888889;
 
     digitalWrite(ENABLE1_PIN, LOW);
     digitalWrite(RESET1_PIN, HIGH);
@@ -1510,6 +1570,15 @@ void setup()
     inst.type = edge;
     step_ins.push_back(inst);
     curr_ins = 0;
+
+    // stepper4.enable();
+    // stepper4.rotate(360); // reverse revolution
+    // stepper4.disable();
+    // stepper3.position = 10;
+
+    // stepper4.enable();
+    // stepper4.rotate(360);
+    // stepper4.disable();
     // delay(500);
 
     // pathfinder_write(0, 139);
